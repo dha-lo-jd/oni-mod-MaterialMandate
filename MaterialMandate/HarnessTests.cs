@@ -6,6 +6,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Gravitas.TestHarness;
+using Klei.AI;
 using UnityEngine;
 
 namespace MaterialMandate;
@@ -70,7 +71,7 @@ internal static class HarnessTests
     public static IEnumerator TargetUsedExclusively()
     {
         var scene = Scene.Create(targetMass: 300f, decoyMass: 200f);
-        yield return Wait.Seconds(300f, 3);
+        yield return scene.WaitUntilBuilt();
         try
         {
             Check.True(scene.IsBuilt, "tile was not built");
@@ -81,6 +82,8 @@ internal static class HarnessTests
         {
             scene.Cleanup();
         }
+
+        yield return Wait.Seconds(3f, 3); // let the grid settle before the next test picks its floor
     }
 
     // Targets (40 kg) are smaller than the need (200 kg): all of it goes in, the rest comes from the decoy.
@@ -88,7 +91,7 @@ internal static class HarnessTests
     public static IEnumerator FallsBackWhenExhausted()
     {
         var scene = Scene.Create(targetMass: 40f, decoyMass: 300f);
-        yield return Wait.Seconds(300f, 3);
+        yield return scene.WaitUntilBuilt();
         try
         {
             Check.True(scene.IsBuilt, "tile was not built");
@@ -99,6 +102,8 @@ internal static class HarnessTests
         {
             scene.Cleanup();
         }
+
+        yield return Wait.Seconds(3f, 3); // let the grid settle before the next test picks its floor
     }
 
     // The whole player flow: build menu -> pick-mode button -> click debris -> leave pick mode -> place the building.
@@ -108,7 +113,7 @@ internal static class HarnessTests
         var scene = Scene.Create(targetMass: 300f, decoyMass: 200f, viaUi: true);
         yield return null;
         scene.RunUiFlow();
-        yield return Wait.Seconds(300f, 3);
+        yield return scene.WaitUntilBuilt();
         try
         {
             Check.True(scene.IsBuilt, "tile was not built");
@@ -119,6 +124,8 @@ internal static class HarnessTests
         {
             scene.Cleanup();
         }
+
+        yield return Wait.Seconds(3f, 3); // let the grid settle before the next test picks its floor
     }
 
     // Same as e0, but the use target is a storage locker holding the 300 kg: the stored chunk is delivered, the decoy is not.
@@ -128,7 +135,7 @@ internal static class HarnessTests
         var scene = Scene.Create(targetMass: 300f, decoyMass: 200f, viaUi: true, container: true);
         yield return null;
         scene.RunUiFlow();
-        yield return Wait.Seconds(300f, 3);
+        yield return scene.WaitUntilBuilt();
         try
         {
             Check.True(scene.IsBuilt, "tile was not built");
@@ -139,6 +146,8 @@ internal static class HarnessTests
         {
             scene.Cleanup();
         }
+
+        yield return Wait.Seconds(3f, 3); // let the grid settle before the next test picks its floor
     }
 
     private sealed class Scene
@@ -161,6 +170,7 @@ internal static class HarnessTests
 
         public static Scene Create(float targetMass, float decoyMass, bool viaUi = false, bool container = false)
         {
+            KeepAlive();
             var minion = Components.LiveMinionIdentities[0];
             var home = Grid.PosToCell(minion.transform.GetPosition());
             var cells = FindFloorRun(home);
@@ -248,6 +258,27 @@ internal static class HarnessTests
             BuildTool.Instance.OnLeftClickUp(pos);
         }
 
+        // Advances the game in short steps until the tile is complete (at most ~300 s of game time).
+        public IEnumerator WaitUntilBuilt()
+        {
+            for (var i = 0; i < 15 && !IsBuilt; i++)
+                yield return Wait.Seconds(20f, 3);
+        }
+
+        // Every test advances game time; keep the duplicants fed so a long run does not starve them.
+        private static void KeepAlive()
+        {
+            foreach (var minion in Components.LiveMinionIdentities.Items)
+            {
+                var amounts = minion.GetAmounts();
+                foreach (var amount in new[] { Db.Get().Amounts.Calories, Db.Get().Amounts.Breath, Db.Get().Amounts.HitPoints, Db.Get().Amounts.Stamina })
+                {
+                    var instance = amounts.Get(amount);
+                    if (instance != null) instance.SetValue(instance.GetMax());
+                }
+            }
+        }
+
         public string Diagnose()
         {
             if (target == null) return "target gone";
@@ -288,22 +319,24 @@ internal static class HarnessTests
             return go.GetComponent<Pickupable>();
         }
 
-        // Free standable cells in the duplicant's row that are connected to it, nearest first.
+        // The nearest free standable cells the duplicant can walk to (any row nearby, so leftovers of earlier tests do not matter).
         private static List<int> FindFloorRun(int home)
         {
+            var navigator = Components.LiveMinionIdentities[0].GetComponent<Navigator>();
+            var origin = Grid.CellToXY(home);
             var result = new List<int>();
-            foreach (var direction in new[] { 1, -1 })
+            for (var dy = -6; dy <= 6; dy++)
+            for (var dx = -25; dx <= 25; dx++)
             {
-                var cell = home;
-                for (var i = 0; i < 25; i++)
-                {
-                    cell = direction > 0 ? Grid.CellRight(cell) : Grid.CellLeft(cell);
-                    if (!IsFreeFloor(cell)) break;
-                    if (i >= 1) result.Add(cell);
-                }
+                if (Mathf.Abs(dx) < 2 && dy == 0) continue; // keep clear of the duplicant itself
+                var cell = Grid.XYToCell(origin.x + dx, origin.y + dy);
+                if (!IsFreeFloor(cell)) continue;
+                if (navigator.GetNavigationCost(cell) < 0) continue;
+                result.Add(cell);
             }
 
-            return result.OrderBy(c => Mathf.Abs(Grid.CellToXY(c).x - Grid.CellToXY(home).x)).ToList();
+            return result.OrderBy(c => Mathf.Abs(Grid.CellToXY(c).x - origin.x) + 2 * Mathf.Abs(Grid.CellToXY(c).y - origin.y))
+                .Take(9).ToList();
         }
 
         private static bool IsFreeFloor(int cell)
@@ -311,6 +344,8 @@ internal static class HarnessTests
             if (!Grid.IsValidCell(cell) || Grid.Solid[cell]) return false;
             var below = Grid.CellBelow(cell);
             if (!Grid.IsValidCell(below) || !Grid.Solid[below]) return false;
+            var above = Grid.CellAbove(cell);
+            if (!Grid.IsValidCell(above) || Grid.Solid[above]) return false; // headroom (also for the 1x2 locker)
             if (Grid.Element[cell].IsLiquid) return false;
             return Grid.Objects[cell, (int)ObjectLayer.Building] == null &&
                    Grid.Objects[cell, (int)ObjectLayer.FoundationTile] == null &&
