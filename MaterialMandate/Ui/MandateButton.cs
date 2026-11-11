@@ -70,6 +70,8 @@ public static class MandateButton
         root.SetActive(true);
     }
 
+    public static void Toggle() => OnClick();
+
     private static void OnClick()
     {
         MandateSelection.PickMode = !MandateSelection.PickMode;

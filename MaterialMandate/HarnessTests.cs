@@ -22,6 +22,31 @@ public static class HarnessDebug
         screen.ConfigureScreen(def);
         return MandateButton.IsCreated ? "button" : "no button";
     }
+
+    public static string DumpPanel()
+    {
+        var panel = PlanScreen.Instance.ProductInfoScreen.materialSelectionPanel;
+        var parent = HarmonyLib.Traverse.Create(panel).Field("priorityScreenParent").GetValue<GameObject>();
+        var lines = new List<string>();
+        foreach (Transform child in panel.transform)
+        {
+            var rect = child.GetComponent<RectTransform>();
+            lines.Add(child.GetSiblingIndex() + " " + child.name + " active=" + child.gameObject.activeSelf + " h=" +
+                      (rect == null ? 0 : rect.rect.height) + " y=" + (rect == null ? 0 : rect.anchoredPosition.y) +
+                      (child.gameObject == parent ? " [priorityParent]" : ""));
+        }
+        return string.Join(" | ", lines);
+    }
+
+    // Like ShowProduct, but also activates the BuildTool as the build menu does (shows the priority panel).
+    public static string ActivateBuild(string prefabId, bool pickMode)
+    {
+        ShowProduct(prefabId);
+        var def = Assets.GetBuildingDef(prefabId);
+        BuildTool.Instance.Activate(def, new List<Tag> { SimHashes.SandStone.CreateTag() });
+        if (pickMode != MandateSelection.PickMode) MandateButton.Toggle();
+        return "active tool: " + PlayerController.Instance.ActiveTool.GetType().Name;
+    }
 }
 
 internal static class HarnessTests
@@ -76,8 +101,51 @@ internal static class HarnessTests
         }
     }
 
+    // The whole player flow: build menu -> pick-mode button -> click debris -> leave pick mode -> place the building.
+    [HarnessTest(Name = "materialmandate.e0_ui_flow", Tags = "materialmandate,e2e", TimeoutSeconds = 600)]
+    public static IEnumerator UiFlow()
+    {
+        var scene = Scene.Create(targetMass: 300f, decoyMass: 200f, viaUi: true);
+        yield return null;
+        scene.RunUiFlow();
+        yield return Wait.Seconds(300f, 3);
+        try
+        {
+            Check.True(scene.IsBuilt, "tile was not built");
+            Check.Near(200f, scene.DecoyMass, 0.5, "decoy chunk was used");
+            Check.Near(100f, scene.TargetMass, 1.0, "target chunk should have supplied exactly 200 kg");
+        }
+        finally
+        {
+            scene.Cleanup();
+        }
+    }
+
+    // Same as e0, but the use target is a storage locker holding the 300 kg: the stored chunk is delivered, the decoy is not.
+    [HarnessTest(Name = "materialmandate.e0b_container_ui_flow", Tags = "materialmandate,e2e", TimeoutSeconds = 600)]
+    public static IEnumerator ContainerUiFlow()
+    {
+        var scene = Scene.Create(targetMass: 300f, decoyMass: 200f, viaUi: true, container: true);
+        yield return null;
+        scene.RunUiFlow();
+        yield return Wait.Seconds(300f, 3);
+        try
+        {
+            Check.True(scene.IsBuilt, "tile was not built");
+            Check.Near(200f, scene.DecoyMass, 0.5, "decoy chunk was used; " + scene.Diagnose());
+            Check.Near(100f, scene.TargetMass, 1.0, "stored chunk should have supplied exactly 200 kg");
+        }
+        finally
+        {
+            scene.Cleanup();
+        }
+    }
+
     private sealed class Scene
     {
+        private GameObject locker;
+        private int targetCell;
+
         private Pickupable target;
         private Pickupable decoy;
         private GameObject site;
@@ -91,7 +159,7 @@ internal static class HarnessTests
 
         private static float Mass(Pickupable p) => p == null ? 0f : p.GetComponent<PrimaryElement>().Mass;
 
-        public static Scene Create(float targetMass, float decoyMass)
+        public static Scene Create(float targetMass, float decoyMass, bool viaUi = false, bool container = false)
         {
             var minion = Components.LiveMinionIdentities[0];
             var home = Grid.PosToCell(minion.transform.GetPosition());
@@ -103,19 +171,102 @@ internal static class HarnessTests
             var targetCell = cells.Last();
             scene.siteCell = cells[cells.Count / 2];
             scene.decoy = Spawn(decoyCell, decoyMass);
-            scene.target = Spawn(targetCell, targetMass);
+            scene.targetCell = targetCell;
+            if (container)
+            {
+                var lockerDef = Assets.GetBuildingDef("StorageLocker");
+                scene.locker = lockerDef.Build(targetCell, Orientation.Neutral, null,
+                    new List<Tag> { SimHashes.Steel.CreateTag() }, 293f, false);
+                scene.target = Spawn(targetCell, targetMass);
+                var lockerStorage = scene.locker.GetComponent<Storage>();
+                lockerStorage.Store(scene.target.gameObject, true);
+                lockerStorage.SetOnlyFetchMarkedItems(true); // otherwise the locker sweeps the decoy chunk into itself
+            }
+            else
+            {
+                scene.target = Spawn(targetCell, targetMass);
+            }
 
             var def = Assets.GetBuildingDef("Tile");
             var elements = new List<Tag> { Material.CreateTag() };
-            scene.site = def.Instantiate(Grid.CellToPosCBC(scene.siteCell, Grid.SceneLayer.Building), Orientation.Neutral,
-                elements);
+            MandateSelection.Clear();
 
-            MandateSelection.Clear();
-            MandateSelection.Pickups.Add(scene.target);
-            MandateSelection.ApplyTo(scene.site);
-            MandateSelection.Clear();
+            if (viaUi)
+            {
+                scene.def = def;
+                scene.elements = elements;
+                return scene;
+            }
+
+            {
+                scene.site = def.Instantiate(Grid.CellToPosCBC(scene.siteCell, Grid.SceneLayer.Building),
+                    Orientation.Neutral, elements);
+                MandateSelection.Pickups.Add(scene.target);
+                MandateSelection.ApplyTo(scene.site);
+                MandateSelection.Clear();
+            }
+
             Check.NotNull(scene.site.GetComponent<ConstructionMandate>(), "mandate was not attached");
             return scene;
+        }
+
+        private BuildingDef def;
+        private List<Tag> elements;
+
+        // Drives the real tool flow. Called a frame after spawning so the debris is registered on the grid.
+        public void RunUiFlow()
+        {
+                var screen = PlanScreen.Instance.ProductInfoScreen;
+                screen.ClearProduct(false);
+                screen.Show();
+                screen.ConfigureScreen(def);
+                BuildTool.Instance.Activate(def, elements);
+                Check.True(PlayerController.Instance.ActiveTool == BuildTool.Instance, "BuildTool is not active");
+
+                MandateButton.Toggle();
+                Check.True(MandateSelection.PickMode, "pick mode did not start");
+                Click(targetCell);
+                Check.Equal(1, MandateSelection.Count, "debris was not designated");
+                var existing = Grid.Objects[targetCell, (int)def.ObjectLayer];
+                Check.True(existing == null || existing.GetComponent<Constructable>() == null,
+                    "a building was placed in pick mode");
+                MandateButton.Toggle();
+                Check.False(MandateSelection.PickMode, "pick mode did not end");
+
+                Click(this.siteCell);
+                var placed = Grid.Objects[this.siteCell, (int)def.ObjectLayer];
+                Check.NotNull(placed, "building was not placed");
+                this.site = placed;
+                BuildTool.Instance.Deactivate();
+            Check.NotNull(site.GetComponent<ConstructionMandate>(), "mandate was not attached");
+        }
+
+        private static void Click(int cell)
+        {
+            var pos = Grid.CellToPosCCC(cell, Grid.SceneLayer.Move);
+            BuildTool.Instance.OnLeftClickDown(pos);
+            BuildTool.Instance.OnLeftClickUp(pos);
+        }
+
+        public string Diagnose()
+        {
+            if (target == null) return "target gone";
+            var minion = Components.LiveMinionIdentities[0].GetComponent<KPrefabID>().InstanceID;
+            var storage = target.storage;
+            var automatable = storage == null ? null : storage.automatable;
+            var mandate = site == null ? null : site.GetComponent<ConstructionMandate>();
+            var nav = Components.LiveMinionIdentities[0].GetComponent<Navigator>();
+            var found = Grid.Objects[siteCell, (int)ObjectLayer.FoundationTile];
+            return "siteNull=" + (site == null) + " foundation=" + (found != null ? found.name : "none") +
+                   " decoyNull=" + (decoy == null) + " alive=" + Components.LiveMinionIdentities.Count +
+                   " gameTime=" + GameClock.Instance.GetTime() + " cachedCell=" + target.cachedCell + " storageCell=" + Grid.PosToCell(storage) + " navCost=" +
+                   target.GetNavigationCost(nav, target.cachedCell) + " decoyCost=" + decoy.GetNavigationCost(nav, decoy.cachedCell) +
+                   " mass=" + Mass(target) + " unreserved=" + target.UnreservedFetchAmount + " reserved=" + target.ReservedAmount +
+                   " couldPickUp=" + target.CouldBePickedUpByMinion(minion) +
+                   " storage=" + (storage != null) + " automationOnly=" + (automatable != null && automatable.GetAutomationOnly()) +
+                   " lockerPrio=" + (storage == null ? -1 : storage.masterPriority.priority_value) +
+                   " mandateStorages=" + (mandate == null ? -1 : mandate.Storages.Count) +
+                   " matches=" + (mandate != null && mandate.Matches(target));
         }
 
         public void Cleanup()
@@ -126,6 +277,7 @@ internal static class HarnessTests
             var built = Grid.Objects[siteCell, (int)ObjectLayer.FoundationTile];
             if (built != null) Util.KDestroyGameObject(built);
             if (site != null) Util.KDestroyGameObject(site);
+            if (locker != null) Util.KDestroyGameObject(locker);
         }
 
         private static Pickupable Spawn(int cell, float mass)
