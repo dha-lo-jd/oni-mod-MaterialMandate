@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-ONI mod. Build: `dotnet build MaterialMandate/MaterialMandate.csproj`（SDK 8 は .slnx 非対応） (Debug copies to `ModInstallPath` from `Local.Build.props`).
+ONI mod. Build: `dotnet build` (Debug copies to `ModInstallPath` from `Local.Build.props`).
 
 ## 実機検証
 ONI 実機で検証するには Gravitas.TestHarness を使う。テストは `[HarnessTest]` を付けた static メソッドとして書く（`MaterialMandate/HarnessTests.cs`、`#if DEBUG`）。
