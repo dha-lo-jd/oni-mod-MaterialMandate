@@ -83,13 +83,13 @@ public static class MandateButton
 
     private static void Place(MaterialSelectionPanel panel)
     {
-        var parent = panel.transform;
-        root.transform.SetParent(parent, false);
+        root.transform.SetParent(panel.transform, false);
+        // The priority panel is the last child by design; put the button last, then move the priority panel behind it.
+        // (Inserting at the priority panel's index would push the button behind it on every later call.)
+        root.transform.SetAsLastSibling();
         var priorityParent = Traverse.Create(panel).Field("priorityScreenParent").GetValue<GameObject>();
-        var index = priorityParent != null && priorityParent.transform.parent == parent
-            ? priorityParent.transform.GetSiblingIndex()
-            : parent.childCount;
-        root.transform.SetSiblingIndex(index);
+        if (priorityParent != null && priorityParent.transform.parent == panel.transform)
+            priorityParent.transform.SetAsLastSibling();
         root.SetActive(true);
     }
 

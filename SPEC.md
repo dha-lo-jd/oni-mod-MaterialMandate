@@ -55,4 +55,8 @@
 - `BuildTool` の左クリックを対象指定モード中だけ横取りし、`BuildingDef.TryPlace` の Postfix で `Constructable` に `ConstructionMandate` を紐付ける。
 - ボタンは `ProductInfoScreen.ConfigureScreen` の Postfix で素材選択パネルと優先度パネルの間に差し込む。
 
-残りの実装: Esc / 右クリックでのモード終了、「解除」ボタン、モード中の表示の整備。
+- 対象指定モード中は `PickModeOverlay` が画面を少し暗くし、指定できる瓦礫とコンテナを光らせる (指定済みはより明るく)。
+
+残りの実装:
+- モード中に光らせる対象を、**選択中の素材に合うものだけ** にする (当初の意図。現状は指定できるものがすべて光る)。
+- `PickModeOverlay.Refresh` の負荷を下げる。0.25 秒ごとに `FindObjectsOfType<Storage>` と全 `Pickupable` の走査を行っており、大きなコロニーで重くなる恐れがある。

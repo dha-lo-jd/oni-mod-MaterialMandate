@@ -6,7 +6,19 @@ namespace MaterialMandate;
 // The use-target group being assembled in the build menu. Applied to every construction order placed while it exists.
 internal static class MandateSelection
 {
-    public static bool PickMode;
+    private static bool pickMode;
+
+    public static bool PickMode
+    {
+        get => pickMode;
+        set
+        {
+            if (pickMode == value) return;
+            pickMode = value;
+            if (value) PickModeOverlay.Show();
+            else PickModeOverlay.Hide();
+        }
+    }
     public static readonly List<Pickupable> Pickups = new List<Pickupable>();
     public static readonly List<Storage> Storages = new List<Storage>();
 
@@ -39,6 +51,21 @@ internal static class MandateSelection
         Storages.RemoveAll(s => s == null);
     }
 
+    // Loose solid things (not creatures) and storage buildings can be designated.
+    public static bool IsDesignatable(Pickupable pickup)
+    {
+        if (pickup == null || pickup.storage != null || pickup.KPrefabID == null) return false;
+        if (pickup.KPrefabID.HasTag(GameTags.Creature) || pickup.GetComponent<MinionIdentity>() != null) return false;
+        var element = pickup.GetComponent<PrimaryElement>();
+        return element != null && element.Mass > 0f;
+    }
+
+    public static bool IsDesignatable(Storage storage)
+    {
+        return storage != null && storage.GetComponent<BuildingComplete>() != null &&
+               storage.fetchCategory != Storage.FetchCategory.Building;
+    }
+
     // Toggles the loose object (preferred) or the container at the cell. Returns a short description of what happened.
     public static string Toggle(int cell)
     {
@@ -46,7 +73,7 @@ internal static class MandateSelection
 
         var item = Grid.Objects[cell, (int)ObjectLayer.Pickupables];
         var pickup = item != null ? item.GetComponent<Pickupable>() : null;
-        if (pickup != null)
+        if (pickup != null && IsDesignatable(pickup))
         {
             var added = !Pickups.Remove(pickup);
             if (added) Pickups.Add(pickup);
@@ -55,7 +82,7 @@ internal static class MandateSelection
 
         var building = Grid.Objects[cell, (int)ObjectLayer.Building];
         var storage = building != null ? building.GetComponent<Storage>() : null;
-        if (storage != null)
+        if (storage != null && IsDesignatable(storage))
         {
             var added = !Storages.Remove(storage);
             if (added) Storages.Add(storage);

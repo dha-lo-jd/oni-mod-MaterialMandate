@@ -24,6 +24,28 @@ public static class HarnessDebug
         return MandateButton.IsCreated ? "button" : "no button";
     }
 
+    // For screenshots: drops a few chunks and a locker next to the first duplicant and centres the camera on them.
+    public static string SpawnDemo()
+    {
+        var minion = Components.LiveMinionIdentities[0];
+        var home = Grid.PosToCell(minion.transform.GetPosition());
+        var element = ElementLoader.FindElementByHash(SimHashes.SandStone);
+        foreach (var dx in new[] { -4, -2, 3 })
+        {
+            var cell = Grid.OffsetCell(home, dx, 0);
+            element.substance.SpawnResource(Grid.CellToPosCBC(cell, Grid.SceneLayer.Ore), 200f,
+                element.defaultValues.temperature, byte.MaxValue, 0, prevent_merge: true);
+        }
+
+        var lockerCell = Grid.OffsetCell(home, 5, 0);
+        var locker = Assets.GetBuildingDef("StorageLocker").Build(lockerCell, Orientation.Neutral, null,
+            new List<Tag> { SimHashes.Steel.CreateTag() }, 293f, false);
+        locker.GetComponent<Storage>().Store(element.substance.SpawnResource(Grid.CellToPosCBC(lockerCell, Grid.SceneLayer.Ore),
+            300f, element.defaultValues.temperature, byte.MaxValue, 0, prevent_merge: true), true);
+        CameraController.Instance.SnapTo(minion.transform.GetPosition());
+        return "spawned";
+    }
+
     public static string DumpPanel()
     {
         var panel = PlanScreen.Instance.ProductInfoScreen.materialSelectionPanel;
@@ -89,6 +111,24 @@ internal static class HarnessTests
 
             BuildTool.Instance.Deactivate();
         }
+    }
+
+    // Pick mode dims the world and lights up designatable debris / containers; leaving it restores everything.
+    [HarnessTest(Name = "materialmandate.ui_pick_mode_overlay", Tags = "materialmandate")]
+    public static void PickModeOverlayTest()
+    {
+        var pickup = Components.Pickupables.Items.First(MandateSelection.IsDesignatable);
+        var controller = pickup.GetComponent<KBatchedAnimController>();
+        Check.True(controller.HighlightColour.g == 0, "already highlighted before pick mode");
+
+        HarnessDebug.ActivateBuild("Tile", pickMode: true);
+        Check.True(PickModeOverlay.IsShown, "overlay was not shown");
+        Check.True(controller.HighlightColour.g > 0, "designatable debris was not highlighted");
+
+        MandateButton.ExitPickMode();
+        Check.False(PickModeOverlay.IsShown, "overlay was not hidden");
+        Check.True(controller.HighlightColour.g == 0, "highlight was not removed");
+        BuildTool.Instance.Deactivate();
     }
 
     // The clear button empties the group and leaves the pick mode untouched.
@@ -195,6 +235,7 @@ internal static class HarnessTests
     private sealed class Scene
     {
         private GameObject locker;
+        private HashSet<Pickupable> baseline;
         private int targetCell;
 
         private Pickupable target;
@@ -213,12 +254,13 @@ internal static class HarnessTests
         public static Scene Create(float targetMass, float decoyMass, bool viaUi = false, bool container = false)
         {
             KeepAlive();
+            var baseline = new HashSet<Pickupable>(Components.Pickupables.Items.Where(p => p != null));
             var minion = Components.LiveMinionIdentities[0];
             var home = Grid.PosToCell(minion.transform.GetPosition());
             var cells = FindFloorRun(home);
             Check.True(cells.Count >= 3, "not enough open floor next to the duplicant (" + cells.Count + " cells)");
 
-            var scene = new Scene();
+            var scene = new Scene { baseline = baseline };
             var decoyCell = cells.First();
             var targetCell = cells.Last();
             scene.siteCell = cells[cells.Count / 2];
@@ -351,6 +393,10 @@ internal static class HarnessTests
             if (built != null) Util.KDestroyGameObject(built);
             if (site != null) Util.KDestroyGameObject(site);
             if (locker != null) Util.KDestroyGameObject(locker);
+            // Anything the test added (e.g. what the locker dropped when it was removed) must not feed the next test.
+            foreach (var extra in Components.Pickupables.Items.Where(p => p != null && !baseline.Contains(p)).ToList())
+                if (extra.GetComponent<MinionIdentity>() == null)
+                    Util.KDestroyGameObject(extra.gameObject);
         }
 
         private static Pickupable Spawn(int cell, float mass)
