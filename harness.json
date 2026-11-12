@@ -1,5 +1,5 @@
 {
   "build": ["dotnet build MaterialMandate/MaterialMandate.csproj -v q -p:ModInstallPath=F:/_System/Documents/Klei/OxygenNotIncluded/mods/local/MaterialMandate"],
   "required_mods": ["MaterialMandate.Local"],
-  "save": "05 all research.sav"
+  "save": "Live Human Testing.sav"
 }
