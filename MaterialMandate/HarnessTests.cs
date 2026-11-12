@@ -66,6 +66,48 @@ internal static class HarnessTests
         Check.Equal("button", HarnessDebug.ShowProduct("Tile"));
     }
 
+    // Esc / right click leave pick mode without closing the build menu or dropping the build tool.
+    [HarnessTest(Name = "materialmandate.ui_pick_mode_exit_keys", Tags = "materialmandate")]
+    public static void PickModeExitKeys()
+    {
+        foreach (var action in new[] { Action.Escape, Action.MouseRight })
+        {
+            HarnessDebug.ActivateBuild("Tile", pickMode: true);
+            Check.True(MandateSelection.PickMode, "pick mode did not start");
+
+            var down = new KButtonEvent(null, InputEventType.KeyDown, action);
+            PlanScreen.Instance.OnKeyDown(down);
+            ToolMenu.Instance.OnKeyDown(down);
+            Check.True(down.Consumed, action + " key down was not consumed");
+            Check.False(MandateSelection.PickMode, action + " did not leave pick mode");
+
+            var up = new KButtonEvent(null, InputEventType.KeyUp, action);
+            PlanScreen.Instance.OnKeyUp(up);
+            ToolMenu.Instance.OnKeyUp(up);
+            Check.True(up.Consumed, action + " key up was not swallowed");
+            Check.True(PlayerController.Instance.ActiveTool == BuildTool.Instance, action + " dropped the build tool");
+
+            BuildTool.Instance.Deactivate();
+        }
+    }
+
+    // The clear button empties the group and leaves the pick mode untouched.
+    [HarnessTest(Name = "materialmandate.ui_clear_group", Tags = "materialmandate")]
+    public static void ClearGroup()
+    {
+        HarnessDebug.ActivateBuild("Tile", pickMode: true);
+        MandateSelection.Pickups.Add(Components.Pickupables.Items.First(p => p != null));
+        MandateButton.Refresh();
+        Check.Equal(1, MandateSelection.Count, "group was not filled");
+
+        MandateButton.ClearGroup();
+        Check.Equal(0, MandateSelection.Count, "group was not cleared");
+        Check.True(MandateSelection.PickMode, "clearing the group must not leave pick mode");
+
+        BuildTool.Instance.Deactivate();
+        Check.Equal(0, MandateSelection.Count, "group survived leaving the build tool");
+    }
+
     // Targets (300 kg) outweigh the need (200 kg for a Tile): the nearer decoy chunk must stay untouched.
     [HarnessTest(Name = "materialmandate.e1_target_used_exclusively", Tags = "materialmandate,e2e", TimeoutSeconds = 600)]
     public static IEnumerator TargetUsedExclusively()

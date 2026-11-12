@@ -26,6 +26,13 @@ internal static class MandateSelection
         Storages.Clear();
     }
 
+    // Empties the group but leaves pick mode as it is.
+    public static void ClearTargets()
+    {
+        Pickups.Clear();
+        Storages.Clear();
+    }
+
     private static void Prune()
     {
         Pickups.RemoveAll(p => p == null);

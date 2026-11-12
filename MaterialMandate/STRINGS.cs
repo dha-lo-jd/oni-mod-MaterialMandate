@@ -7,5 +7,6 @@ public static class STRINGS
     {
         public static LocString BUTTON = "Designate use targets";
         public static LocString BUTTON_ACTIVE = "Click debris / containers (click to finish)";
+        public static LocString CLEAR = "Clear";
     }
 }

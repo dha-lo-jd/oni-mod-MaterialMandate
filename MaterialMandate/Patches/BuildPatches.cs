@@ -47,3 +47,56 @@ public static class BuildToolDeactivatePatch
         MandateButton.Refresh();
     }
 }
+
+// Esc / right click leave pick mode instead of closing the build menu. PlanScreen and ToolMenu handle these keys
+// (right click on key up), so both are intercepted; the matching key up of an intercepted key down is swallowed too.
+internal static class PickModeKeys
+{
+    private static bool swallowUp;
+
+    private static bool IsExitKey(KButtonEvent e) => e.IsAction(Action.Escape) || e.IsAction(Action.MouseRight);
+
+    private static bool Active =>
+        MandateSelection.PickMode && PlayerController.Instance != null && PlayerController.Instance.ActiveTool == BuildTool.Instance;
+
+    public static bool OnKeyDown(KButtonEvent e)
+    {
+        if (!Active || !IsExitKey(e)) return true;
+        e.TryConsume(e.GetAction());
+        MandateButton.ExitPickMode();
+        swallowUp = true;
+        return false;
+    }
+
+    public static bool OnKeyUp(KButtonEvent e)
+    {
+        if (!swallowUp || !IsExitKey(e)) return true;
+        swallowUp = false;
+        e.TryConsume(e.GetAction());
+        return false;
+    }
+}
+
+[HarmonyPatch(typeof(PlanScreen), nameof(PlanScreen.OnKeyDown))]
+public static class PlanScreenKeyDownPatch
+{
+    public static bool Prefix(KButtonEvent e) => PickModeKeys.OnKeyDown(e);
+}
+
+[HarmonyPatch(typeof(PlanScreen), nameof(PlanScreen.OnKeyUp))]
+public static class PlanScreenKeyUpPatch
+{
+    public static bool Prefix(KButtonEvent e) => PickModeKeys.OnKeyUp(e);
+}
+
+[HarmonyPatch(typeof(ToolMenu), nameof(ToolMenu.OnKeyDown))]
+public static class ToolMenuKeyDownPatch
+{
+    public static bool Prefix(KButtonEvent e) => PickModeKeys.OnKeyDown(e);
+}
+
+[HarmonyPatch(typeof(ToolMenu), nameof(ToolMenu.OnKeyUp))]
+public static class ToolMenuKeyUpPatch
+{
+    public static bool Prefix(KButtonEvent e) => PickModeKeys.OnKeyUp(e);
+}
