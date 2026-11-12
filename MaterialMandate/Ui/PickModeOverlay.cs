@@ -4,8 +4,8 @@ using UnityEngine.UI;
 
 namespace MaterialMandate;
 
-// While in pick mode: dims the world a little and lights up everything that can be designated (loose debris and containers).
-// The designated ones are lit more strongly. A quasi overlay, drawn with a translucent layer behind the HUD and the
+// While in pick mode: dims the world a little and lights up what can be designated for the selected material (loose
+// debris of that material and containers holding some). The designated ones are lit more strongly. A quasi overlay, drawn with a translucent layer behind the HUD and the
 // highlight colour the game itself uses for hovering (additive tint of the animation).
 public static class PickModeOverlay
 {
@@ -16,7 +16,12 @@ public static class PickModeOverlay
 
     private static GameObject dim;
     private static Driver driver;
-    private static readonly Dictionary<KBatchedAnimController, Color32> lit = new Dictionary<KBatchedAnimController, Color32>();
+    // Cells added around the camera view, so that an object scrolling in is already lit.
+    private const int ViewPadding = 2;
+
+    private static Dictionary<KBatchedAnimController, Color32> lit = new Dictionary<KBatchedAnimController, Color32>();
+    private static Dictionary<KBatchedAnimController, Color32> wanted = new Dictionary<KBatchedAnimController, Color32>();
+    private static readonly HashSet<GameObject> seenBuildings = new HashSet<GameObject>();
 
     public static bool IsShown => driver != null;
 
@@ -56,17 +61,22 @@ public static class PickModeOverlay
         image.raycastTarget = false;
     }
 
-    // Recomputes what is lit; called periodically because debris keeps appearing, moving and merging.
+    // Recomputes what is lit; called periodically because debris keeps appearing, moving and merging, the camera moves
+    // and the selected material can change.
+    //
+    // Designated targets are always lit. Candidates are lit only when they are of the selected material (a container:
+    // when it holds some) and only inside the camera view, so the cost follows the screen, not the size of the colony.
     public static void Refresh()
     {
-        var wanted = new Dictionary<KBatchedAnimController, Color32>();
-        foreach (var pickup in Components.Pickupables.Items)
-            if (MandateSelection.IsDesignatable(pickup))
-                Want(wanted, pickup.gameObject, MandateSelection.Pickups.Contains(pickup) ? Designated : Candidate);
+        wanted.Clear();
+        foreach (var pickup in MandateSelection.Pickups)
+            if (pickup != null)
+                Want(pickup.gameObject, Designated);
+        foreach (var storage in MandateSelection.Storages)
+            if (storage != null)
+                Want(storage.gameObject, Designated);
 
-        foreach (var storage in Object.FindObjectsOfType<Storage>())
-            if (MandateSelection.IsDesignatable(storage))
-                Want(wanted, storage.gameObject, MandateSelection.Storages.Contains(storage) ? Designated : Candidate);
+        AddVisibleCandidates(MandateSelection.SelectedMaterials());
 
         foreach (var pair in lit)
             if (pair.Key != null && !wanted.ContainsKey(pair.Key))
@@ -75,14 +85,68 @@ public static class PickModeOverlay
         foreach (var pair in wanted)
             pair.Key.HighlightColour = pair.Value;
 
-        lit.Clear();
-        foreach (var pair in wanted) lit[pair.Key] = pair.Value;
+        // The new set becomes the lit one; the old dictionary is reused for the next refresh.
+        var previous = lit;
+        lit = wanted;
+        wanted = previous;
     }
 
-    private static void Want(Dictionary<KBatchedAnimController, Color32> wanted, GameObject target, Color32 color)
+    private static void AddVisibleCandidates(IList<Tag> materials)
+    {
+        if (Camera.main == null) return;
+        Grid.GetVisibleExtents(out int minX, out int minY, out int maxX, out int maxY);
+        minX = Mathf.Max(0, minX - ViewPadding);
+        minY = Mathf.Max(0, minY - ViewPadding);
+        maxX = Mathf.Min(Grid.WidthInCells - 1, maxX + ViewPadding);
+        maxY = Mathf.Min(Grid.HeightInCells - 1, maxY + ViewPadding);
+
+        seenBuildings.Clear();
+        for (var y = minY; y <= maxY; y++)
+        {
+            for (var x = minX; x <= maxX; x++)
+            {
+                var cell = Grid.XYToCell(x, y);
+
+                // Loose objects of a cell form a linked list starting at the one registered on the grid.
+                var top = Grid.Objects[cell, (int)ObjectLayer.Pickupables];
+                if (top != null)
+                {
+                    var first = top.GetComponent<Pickupable>();
+                    for (var entry = first == null ? null : first.objectLayerListItem; entry != null; entry = entry.nextItem)
+                    {
+                        var pickup = entry.pickupable;
+                        if (MandateSelection.IsDesignatable(pickup) && MandateSelection.MatchesMaterial(pickup, materials))
+                            Want(pickup.gameObject, Candidate);
+                    }
+                }
+
+                // A building covers several cells; look at each one once.
+                var building = Grid.Objects[cell, (int)ObjectLayer.Building];
+                if (building != null && seenBuildings.Add(building))
+                {
+                    var storage = building.GetComponent<Storage>();
+                    if (MandateSelection.IsDesignatable(storage) && MandateSelection.MatchesMaterial(storage, materials))
+                        Want(building, Candidate);
+                }
+            }
+        }
+
+        seenBuildings.Clear();
+    }
+
+    // The first colour asked for an object wins, so a designated target stays designated.
+    private static void Want(GameObject target, Color32 color)
     {
         var controller = target.GetComponent<KBatchedAnimController>();
-        if (controller != null) wanted[controller] = color;
+        if (controller != null && !wanted.ContainsKey(controller)) wanted[controller] = color;
+    }
+
+    // What the overlay lights the object with: 0 = not lit, 1 = candidate, 2 = designated (read by the in-game tests).
+    internal static int LitLevel(GameObject target)
+    {
+        var controller = target == null ? null : target.GetComponent<KBatchedAnimController>();
+        if (controller == null || !lit.TryGetValue(controller, out var color)) return 0;
+        return color.Equals(Designated) ? 2 : 1;
     }
 
     private sealed class Driver : MonoBehaviour

@@ -8,7 +8,8 @@ you point at**, instead of whatever matching material happens to be nearest.
 1. Open the build menu, pick a building and its material as usual.
 2. Press **Designate use targets**, between the material list and the priority panel.
 3. Click debris on the ground and storage containers to add them to the use targets. The button turns green and
-   shows how many targets are registered.
+   shows how many targets are registered. While you are choosing, the world dims: debris of the selected material
+   and containers holding some of it are lit, and registered targets are lit more brightly.
 4. Leave the designation mode by pressing the button again, **Esc** or right-click, then place the building.
 
 Every construction order placed while use targets are registered is bound to them. **Clear** empties the list, and

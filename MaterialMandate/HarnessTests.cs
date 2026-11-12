@@ -113,22 +113,103 @@ internal static class HarnessTests
         }
     }
 
-    // Pick mode dims the world and lights up designatable debris / containers; leaving it restores everything.
+    // Pick mode dims the world and lights up what can be designated for the selected material, inside the camera view;
+    // leaving it restores everything.
     [HarnessTest(Name = "materialmandate.ui_pick_mode_overlay", Tags = "materialmandate")]
-    public static void PickModeOverlayTest()
+    public static IEnumerator PickModeOverlayTest()
     {
-        var pickup = Components.Pickupables.Items.First(MandateSelection.IsDesignatable);
-        var controller = pickup.GetComponent<KBatchedAnimController>();
-        Check.True(controller.HighlightColour.g == 0, "already highlighted before pick mode");
+        var minion = Components.LiveMinionIdentities[0];
+        var home = Grid.PosToCell(minion.transform.GetPosition());
+        var cells = Scene.FindFloorRun(home);
+        Check.True(cells.Count >= 4, "not enough open floor next to the duplicant (" + cells.Count + " cells)");
 
-        HarnessDebug.ActivateBuild("Tile", pickMode: true);
-        Check.True(PickModeOverlay.IsShown, "overlay was not shown");
-        Check.True(controller.HighlightColour.g > 0, "designatable debris was not highlighted");
+        var baseline = new HashSet<Pickupable>(Components.Pickupables.Items.Where(p => p != null));
+        var def = Assets.GetBuildingDef("Tile");
+        var sandstone = new List<Tag> { SimHashes.SandStone.CreateTag() };
+        var granite = new List<Tag> { SimHashes.Granite.CreateTag() };
+        var lockerDef = Assets.GetBuildingDef("StorageLocker");
+        var steel = new List<Tag> { SimHashes.Steel.CreateTag() };
+        GameObject fullLocker = null;
+        GameObject emptyLocker = null;
+        var view = CameraController.Instance.transform.GetPosition();
 
-        MandateButton.ExitPickMode();
-        Check.False(PickModeOverlay.IsShown, "overlay was not hidden");
-        Check.True(controller.HighlightColour.g == 0, "highlight was not removed");
-        BuildTool.Instance.Deactivate();
+        try
+        {
+            var same = Scene.Spawn(cells[0], 50f).gameObject;
+            var other = Scene.Spawn(cells[1], 50f, SimHashes.Granite).gameObject;
+            fullLocker = lockerDef.Build(cells[2], Orientation.Neutral, null, steel, 293f, false);
+            emptyLocker = lockerDef.Build(cells[3], Orientation.Neutral, null, steel, 293f, false);
+            foreach (var locker in new[] { fullLocker, emptyLocker })
+                locker.GetComponent<Storage>().SetOnlyFetchMarkedItems(true); // keep the lockers from being filled
+            fullLocker.GetComponent<Storage>().Store(Scene.Spawn(cells[2], 50f).gameObject, true);
+            yield return null;
+            yield return null;
+
+            CameraController.Instance.SnapTo(minion.transform.GetPosition());
+            yield return null;
+            var controller = same.GetComponent<KBatchedAnimController>();
+            Check.True(controller.HighlightColour.g == 0, "already highlighted before pick mode");
+
+            HarnessDebug.ActivateBuild("Tile", pickMode: true); // selects Sandstone
+            Check.True(PickModeOverlay.IsShown, "overlay was not shown");
+            PickModeOverlay.Refresh();
+            Check.True(controller.HighlightColour.g > 0, "debris of the selected material was not highlighted");
+            Check.Equal(1, PickModeOverlay.LitLevel(same), "debris of the selected material");
+            Check.Equal(0, PickModeOverlay.LitLevel(other), "debris of another material");
+            Check.Equal(1, PickModeOverlay.LitLevel(fullLocker), "container holding the selected material");
+            Check.Equal(0, PickModeOverlay.LitLevel(emptyLocker), "empty container");
+
+            // A designated target stays lit whatever the material.
+            MandateSelection.Pickups.Add(other.GetComponent<Pickupable>());
+            PickModeOverlay.Refresh();
+            Check.Equal(2, PickModeOverlay.LitLevel(other), "designated debris of another material");
+            MandateSelection.ClearTargets();
+
+            // The highlight follows the material selection.
+            BuildTool.Instance.Activate(def, granite);
+            PickModeOverlay.Refresh();
+            Check.Equal(0, PickModeOverlay.LitLevel(same), "Sandstone debris with Granite selected");
+            Check.Equal(1, PickModeOverlay.LitLevel(other), "Granite debris with Granite selected");
+            Check.Equal(0, PickModeOverlay.LitLevel(fullLocker), "Sandstone container with Granite selected");
+            Check.True(controller.HighlightColour.g == 0, "highlight of the unselected material was not removed");
+            BuildTool.Instance.Activate(def, sandstone);
+
+            // Only what the camera shows is lit.
+            Grid.CellToXY(home, out var homeX, out var homeY);
+            var farX = homeX < Grid.WidthInCells / 2 ? Grid.WidthInCells - 4 : 4;
+            CameraController.Instance.SnapTo(Grid.CellToPosCCC(Grid.XYToCell(farX, homeY), Grid.SceneLayer.Move));
+            yield return null;
+            PickModeOverlay.Refresh();
+            Check.Equal(0, PickModeOverlay.LitLevel(same), "debris outside the camera view");
+            CameraController.Instance.SnapTo(minion.transform.GetPosition());
+            yield return null;
+            PickModeOverlay.Refresh();
+            Check.Equal(1, PickModeOverlay.LitLevel(same), "debris back in the camera view");
+
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            for (var i = 0; i < 100; i++) PickModeOverlay.Refresh();
+            watch.Stop();
+            Debug.Log("[MaterialMandate] overlay refresh: " + (watch.Elapsed.TotalMilliseconds / 100.0).ToString("0.000") + " ms per call");
+
+            MandateButton.ExitPickMode();
+            Check.False(PickModeOverlay.IsShown, "overlay was not hidden");
+            Check.True(controller.HighlightColour.g == 0, "highlight was not removed");
+            Check.Equal(0, PickModeOverlay.LitLevel(same), "lit level after leaving pick mode");
+        }
+        finally
+        {
+            MandateSelection.Clear();
+            if (PlayerController.Instance.ActiveTool == BuildTool.Instance) BuildTool.Instance.Deactivate();
+            CameraController.Instance.SnapTo(view);
+            foreach (var locker in new[] { fullLocker, emptyLocker })
+                if (locker != null)
+                    Util.KDestroyGameObject(locker);
+            foreach (var extra in Components.Pickupables.Items.Where(p => p != null && !baseline.Contains(p)).ToList())
+                if (extra.GetComponent<MinionIdentity>() == null)
+                    Util.KDestroyGameObject(extra.gameObject);
+        }
+
+        yield return Wait.Seconds(1f, 3); // let the grid settle before the next test picks its floor
     }
 
     // The clear button empties the group and leaves the pick mode untouched.
@@ -399,16 +480,16 @@ internal static class HarnessTests
                     Util.KDestroyGameObject(extra.gameObject);
         }
 
-        private static Pickupable Spawn(int cell, float mass)
+        public static Pickupable Spawn(int cell, float mass, SimHashes material = Material)
         {
-            var element = ElementLoader.FindElementByHash(Material);
+            var element = ElementLoader.FindElementByHash(material);
             var go = element.substance.SpawnResource(Grid.CellToPosCBC(cell, Grid.SceneLayer.Ore), mass,
                 element.defaultValues.temperature, byte.MaxValue, 0, prevent_merge: true);
             return go.GetComponent<Pickupable>();
         }
 
         // The nearest free standable cells the duplicant can walk to (any row nearby, so leftovers of earlier tests do not matter).
-        private static List<int> FindFloorRun(int home)
+        public static List<int> FindFloorRun(int home)
         {
             var navigator = Components.LiveMinionIdentities[0].GetComponent<Navigator>();
             var origin = Grid.CellToXY(home);

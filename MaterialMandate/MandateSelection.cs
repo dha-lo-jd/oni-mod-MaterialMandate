@@ -66,6 +66,43 @@ internal static class MandateSelection
                storage.fetchCategory != Storage.FetchCategory.Building;
     }
 
+    private static readonly HarmonyLib.AccessTools.FieldRef<BuildTool, IList<Tag>> SelectedElements =
+        HarmonyLib.AccessTools.FieldRefAccess<BuildTool, IList<Tag>>("selectedElements");
+
+    // The materials chosen for the building being placed; null when the build tool is not in use.
+    public static IList<Tag> SelectedMaterials()
+    {
+        var tool = BuildTool.Instance;
+        if (tool == null || PlayerController.Instance == null || PlayerController.Instance.ActiveTool != tool) return null;
+        return SelectedElements(tool);
+    }
+
+    // Whether the object is one of the given materials. Without materials everything matches.
+    public static bool MatchesMaterial(Pickupable pickup, IList<Tag> materials)
+    {
+        if (materials == null || materials.Count == 0) return true;
+        var id = pickup == null ? null : pickup.KPrefabID;
+        if (id == null) return false;
+        for (var i = 0; i < materials.Count; i++)
+            if (id.HasTag(materials[i]))
+                return true;
+        return false;
+    }
+
+    // A container matches when it holds at least one object of the given materials.
+    public static bool MatchesMaterial(Storage storage, IList<Tag> materials)
+    {
+        if (materials == null || materials.Count == 0) return true;
+        if (storage == null) return false;
+        var items = storage.items;
+        for (var i = 0; i < items.Count; i++)
+        {
+            var pickup = items[i] == null ? null : items[i].GetComponent<Pickupable>();
+            if (pickup != null && MatchesMaterial(pickup, materials)) return true;
+        }
+        return false;
+    }
+
     // Toggles the loose object (preferred) or the container at the cell. Returns a short description of what happened.
     public static string Toggle(int cell)
     {
