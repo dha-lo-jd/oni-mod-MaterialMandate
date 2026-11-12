@@ -33,9 +33,10 @@
 - 当初案の `FetchManager.IsFetchablePickup` / `FindFetchTarget` への Postfix は不可: `FetchManager.pickups` は同じタグの物体を最も近い1つに畳むため、指定対象が候補に入らない。
 - 実装した方式:
   1. `FetchChore.FindFetchTarget` の Prefix: 使用対象群 (瓦礫と、コンテナ内のアイテム) だけを、到達可能性 (`GetNavigationCost`)・予約状況込みで評価し、最寄りを運搬元にする。他の運搬で予約済みなら待機。尽きた・到達不能なら通常調達に戻す。
-  2. `FetchAreaChore.StatesInstance.Begin` の Postfix: 運搬元が使用対象なら、付近の同素材を一緒に運ぶ処理 (範囲まとめ取り) から対象外の物体を除き、運搬量も対象の残量に合わせる。
+  2. `FetchAreaChore.StatesInstance.Begin` の Prefix / Finalizer と `ChoreConsumer.CanReach` の Prefix: 運搬元が使用対象なら、`Begin` が付近の同素材を集める間 (範囲まとめ取り) だけ、対象外の物体を「到達できない」と答えさせる。`Begin` は集めた合計から「この運搬で何 kg 届けるか」を決めて運搬タスクに伝えるので、**集める段階で対象外を外す必要がある**。
+     - 以前は `Begin` の Postfix で、集め終わったあとに対象外を取り除いていた。これだと、対象のすぐ近く (根元の物体から左 3・右 5 セルの範囲) に同素材の別の塊があるとき、運搬タスクは「200 kg 届ける」と約束したまま 40 kg しか運ばず、不足分の再発注も行われないので、**素材が足りないまま建築が完成していた** (2026-11-13 に発見・修正。テスト `e3_neighbour_is_not_counted` が再現する)。
 - 分割は標準の `Take` 任せで、必要量だけ運ばれる。
-- 実機テスト (`Live Human Testing.sav`、Tile = 200 kg): 対象 300 kg + 手前のデコイ 200 kg → デコイ無傷・対象が 100 kg に; 対象 40 kg + デコイ 300 kg → 対象を使い切り、デコイから 160 kg 補填。
+- 実機テスト (`Live Human Testing.sav`、Tile = 200 kg): 対象 300 kg + 手前のデコイ 200 kg → デコイ無傷・対象が 100 kg に; 対象 40 kg + デコイ 300 kg → 対象を使い切り、デコイから 160 kg 補填 (デコイが対象の真横にある配置でも同じ)。
 
 ### 指定フロー (改訂後)
 - 建築メニューの商品情報パネルは `ProductInfoScreen` で、素材選択パネル (`materialSelectionPanel`) を持つ。`ConfigureScreen` への Postfix で、素材選択パネルと優先度パネルの間にボタンを差し込める見込み (レイアウトは実機で要調整)。
@@ -51,16 +52,14 @@
 
 ## 実装方針
 実装済みの構成 (詳細は調査結果):
-- `FetchChore.FindFetchTarget` Prefix と `FetchAreaChore.StatesInstance.Begin` Postfix で運搬元を使用対象に絞る。
+- `FetchChore.FindFetchTarget` の Prefix と、`FetchAreaChore.StatesInstance.Begin` の間だけ効く `ChoreConsumer.CanReach` の Prefix で、運搬元と積み荷を使用対象に絞る。
 - `BuildTool` の左クリックを対象指定モード中だけ横取りし、`BuildingDef.TryPlace` の Postfix で `Constructable` に `ConstructionMandate` を紐付ける。
 - ボタンは `ProductInfoScreen.ConfigureScreen` の Postfix で素材選択パネルと優先度パネルの間に差し込む。
 
 - 対象指定モード中は `PickModeOverlay` が画面を少し暗くし、指定できる瓦礫とコンテナを光らせる (指定済みはより明るく)。
   - 光らせる候補は、**選択中の素材に合うものだけ**。瓦礫はその素材のもの、コンテナは中にその素材を 1 つでも持つもの。選択中の素材は `BuildTool` の `selectedElements` から読むので、素材を選び直すと次の更新で追従する。
-  - 指定済みの対象は、素材が合わなくても光らせる (登録されていることが見え、クリックで外せるように)。
+  - **クリックで指定できるのは、光っているものだけ。** 素材の合わない瓦礫や、その素材を持たないコンテナをクリックしても何も起きない。指定済みの対象は光っているので、もう一度クリックすれば外せる。1 つのセルに瓦礫が重なっているときは、素材の合うものを選ぶ。
+  - **素材を選び直すと、使用対象群を空にする。** 前の素材のために選んだ対象は効かなくなるため。対象指定モードは続く。同じ素材を選び直しただけなら何も変えない。
   - 更新 (0.25 秒ごと) は **カメラに映っている範囲のセルだけ** を走査する。負荷は画面の広さで決まり、コロニーの大きさには比例しない。`FindObjectsOfType<Storage>` と全 `Pickupable` の走査はやめた。
 
 残りの実装: なし。
-
-判断待ち:
-- クリックでの指定は、素材が合わないもの (光っていないもの) にも効く。あとで素材を選び直す使い方を妨げないためだが、「光っているものだけ指定できる」に揃える案もある。

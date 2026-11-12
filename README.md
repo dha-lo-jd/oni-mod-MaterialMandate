@@ -9,7 +9,8 @@ you point at**, instead of whatever matching material happens to be nearest.
 2. Press **Designate use targets**, between the material list and the priority panel.
 3. Click debris on the ground and storage containers to add them to the use targets. The button turns green and
    shows how many targets are registered. While you are choosing, the world dims: debris of the selected material
-   and containers holding some of it are lit, and registered targets are lit more brightly.
+   and containers holding some of it are lit, and registered targets are lit more brightly. Only lit things can be
+   clicked; click a registered target again to release it.
 4. Leave the designation mode by pressing the button again, **Esc** or right-click, then place the building.
 
 Every construction order placed while use targets are registered is bound to them. **Clear** empties the list, and
@@ -19,8 +20,9 @@ it is also emptied when you leave the build tool.
 
 - **Debris and containers**: a debris pile is used as that single object. A container offers everything inside it
   that matches the selected material.
-- **Only the selected material counts**: targets of another material are ignored. For buildings that need several
-  materials, a target is used for the slot that accepts it.
+- **Only the selected material counts**: only debris of the selected material, and containers holding some, can be
+  registered. Picking another material empties the list. For buildings that need several materials, a target is
+  used for the slot that accepts it.
 - **Targets first, then normal delivery**: the order takes nothing from elsewhere until the targets run out. After
   that, the rest is delivered from the general stock as in the unmodded game.
 - **Only as much as needed**: a target larger than the required amount is split, and the remainder stays where it is.
@@ -38,8 +40,9 @@ Text is translated through `translations/<language code>.po` (English and Japane
 
 - ONI build: **744825 or later**
 - Required DLC: none
-- Patches `FetchChore.FindFetchTarget`, `FetchAreaChore.StatesInstance.Begin`, `BuildingDef.TryPlace`,
-  `ProductInfoScreen.ConfigureScreen` and the left click of `BuildTool` (Harmony).
+- Patches `FetchChore.FindFetchTarget`, `FetchAreaChore.StatesInstance.Begin`, `ChoreConsumer.CanReach`,
+  `BuildingDef.TryPlace`, `ProductInfoScreen.ConfigureScreen`, and the activation and left click of `BuildTool`
+  (Harmony).
 
 ## Local build setup
 

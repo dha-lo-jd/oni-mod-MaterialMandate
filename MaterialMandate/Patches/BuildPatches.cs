@@ -16,6 +16,17 @@ public static class BuildingDefTryPlacePatch
     }
 }
 
+// Picking another material in the build menu re-activates the build tool with the new selection.
+[HarmonyPatch(typeof(BuildTool), nameof(BuildTool.Activate), typeof(BuildingDef), typeof(IList<Tag>))]
+public static class BuildToolActivatePatch
+{
+    public static void Postfix(IList<Tag> selected_elements)
+    {
+        if (MandateSelection.MaterialsSelected(selected_elements)) PickModeOverlay.RefreshIfShown();
+        MandateButton.Refresh();
+    }
+}
+
 // While in pick mode the left click designates targets instead of placing the building.
 [HarmonyPatch(typeof(BuildTool), nameof(BuildTool.OnLeftClickDown))]
 public static class BuildToolLeftClickDownPatch

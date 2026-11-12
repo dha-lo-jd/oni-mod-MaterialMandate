@@ -9,7 +9,7 @@ namespace MaterialMandate.Patches;
 // Two places decide what a duplicant carries to a construction site:
 //  1. FetchChore.FindFetchTarget picks the "root" pickupable. FetchManager.pickups cannot be used for that, because it keeps
 //     only the nearest pickupable per tag set, so designated targets are evaluated here by themselves.
-//  2. FetchAreaChore.StatesInstance.Begin then adds every same-element pickupable nearby to the trip.
+//  2. FetchAreaChore.StatesInstance.Begin then adds every same-element pickupable nearby to the trip (see below).
 [HarmonyPatch(typeof(FetchChore), nameof(FetchChore.FindFetchTarget))]
 public static class FetchChoreFindFetchTargetPatch
 {
@@ -67,28 +67,53 @@ public static class FetchChoreFindFetchTargetPatch
     }
 }
 
+// A trip that starts from a designated target carries designated targets only.
+//
+// Begin plans the trip: it adds every same-material pickupable near the root to the load, and from that total it tells
+// each fetch chore how much this trip will bring (the chore's order then issues a new chore for whatever is missing).
+// The plan must therefore see the targets only. Trimming the load afterwards is too late: the chore would still count
+// on the nearby non-targets, bring less than it promised, and the building would be finished short of material.
+// So while Begin runs for such a trip, every other pickupable is reported as unreachable to its gathering pass.
 [HarmonyPatch(typeof(FetchAreaChore.StatesInstance), nameof(FetchAreaChore.StatesInstance.Begin))]
 public static class FetchAreaChoreBeginPatch
 {
-    public static void Postfix(FetchAreaChore.StatesInstance __instance)
+    private static readonly AccessTools.FieldRef<FetchAreaChore.StatesInstance, FetchChore> RootChore =
+        AccessTools.FieldRefAccess<FetchAreaChore.StatesInstance, FetchChore>("rootChore");
+
+    // The mandate of the trip being planned right now; null outside Begin. Chores begin on the main thread.
+    internal static ConstructionMandate Planning;
+
+    public static void Prefix(FetchAreaChore.StatesInstance __instance, Chore.Precondition.Context context)
     {
-        var traverse = Traverse.Create(__instance);
-        var rootChore = traverse.Field("rootChore").GetValue<FetchChore>();
+        Planning = null;
+        var rootChore = RootChore(__instance);
         var mandate = rootChore == null ? null : ConstructionMandate.From(rootChore.destination);
         if (mandate == null) return;
 
-        var fetchables = traverse.Field("fetchables").GetValue<List<Pickupable>>();
-        if (fetchables == null || fetchables.Count == 0) return;
+        // A trip that starts from a non-target means the targets are exhausted: that is the normal fallback.
+        var rootFetchable = context.data as Pickupable;
+        if (rootFetchable != null && mandate.Matches(rootFetchable)) Planning = mandate;
+    }
 
-        // The trip started from a designated target: do not let it pick up anything else along the way.
-        // (A trip started from a non-target means the targets are exhausted, which is the normal fallback.)
-        if (!mandate.Matches(fetchables[0])) return;
+    public static void Finalizer()
+    {
+        Planning = null;
+    }
+}
 
-        fetchables.RemoveAll(p => !mandate.Matches(p));
-        var available = 0f;
-        foreach (var pickup in fetchables) available += pickup.UnreservedFetchAmount;
+[HarmonyPatch(typeof(ChoreConsumer), nameof(ChoreConsumer.CanReach))]
+public static class ChoreConsumerCanReachPatch
+{
+    public static bool Prefix(IApproachable approachable, ref bool __result)
+    {
+        var mandate = FetchAreaChoreBeginPatch.Planning;
+        if (mandate == null) return true;
+        if (approachable is Pickupable pickup && !mandate.Matches(pickup))
+        {
+            __result = false;
+            return false;
+        }
 
-        var requested = traverse.Field("fetchAmountRequested");
-        requested.SetValue(Math.Min(requested.GetValue<float>(), available));
+        return true;
     }
 }

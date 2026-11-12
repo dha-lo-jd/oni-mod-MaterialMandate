@@ -61,11 +61,17 @@ public static class PickModeOverlay
         image.raycastTarget = false;
     }
 
+    public static void RefreshIfShown()
+    {
+        if (driver != null) Refresh();
+    }
+
     // Recomputes what is lit; called periodically because debris keeps appearing, moving and merging, the camera moves
     // and the selected material can change.
     //
     // Designated targets are always lit. Candidates are lit only when they are of the selected material (a container:
     // when it holds some) and only inside the camera view, so the cost follows the screen, not the size of the colony.
+    // What is lit is exactly what a click can designate or release (MandateSelection.Toggle).
     public static void Refresh()
     {
         wanted.Clear();

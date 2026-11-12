@@ -36,6 +36,30 @@ internal static class MandateSelection
         PickMode = false;
         Pickups.Clear();
         Storages.Clear();
+        lastMaterials = null;
+    }
+
+    // The materials of the last build tool activation, to notice when the player picks another material.
+    private static List<Tag> lastMaterials;
+
+    // Called whenever the build tool is (re)activated with a material selection. Targets chosen for another material
+    // would no longer apply, so a change of material empties the group; pick mode stays as it is.
+    public static bool MaterialsSelected(IList<Tag> materials)
+    {
+        var changed = lastMaterials != null && !SameTags(lastMaterials, materials);
+        lastMaterials = materials == null ? null : new List<Tag>(materials);
+        if (!changed || (Pickups.Count == 0 && Storages.Count == 0)) return false;
+        ClearTargets();
+        return true;
+    }
+
+    private static bool SameTags(IList<Tag> a, IList<Tag> b)
+    {
+        if (b == null || a.Count != b.Count) return false;
+        for (var i = 0; i < a.Count; i++)
+            if (a[i] != b[i])
+                return false;
+        return true;
     }
 
     // Empties the group but leaves pick mode as it is.
@@ -103,27 +127,35 @@ internal static class MandateSelection
         return false;
     }
 
-    // Toggles the loose object (preferred) or the container at the cell. Returns a short description of what happened.
+    // Toggles a loose object (preferred) or the container at the cell. Returns a short description of what happened,
+    // or null when nothing there can be designated. Only what the overlay lights up can be clicked: things of the
+    // selected material, and things already designated (to take them out again).
     public static string Toggle(int cell)
     {
         if (!Grid.IsValidCell(cell)) return null;
+        var materials = SelectedMaterials();
 
+        // Several loose objects can lie in one cell; they form a linked list starting at the one on the grid.
         var item = Grid.Objects[cell, (int)ObjectLayer.Pickupables];
-        var pickup = item != null ? item.GetComponent<Pickupable>() : null;
-        if (pickup != null && IsDesignatable(pickup))
+        var first = item != null ? item.GetComponent<Pickupable>() : null;
+        for (var entry = first == null ? null : first.objectLayerListItem; entry != null; entry = entry.nextItem)
         {
-            var added = !Pickups.Remove(pickup);
-            if (added) Pickups.Add(pickup);
-            return (added ? "+ " : "- ") + pickup.GetProperName();
+            var pickup = entry.pickupable;
+            if (!IsDesignatable(pickup)) continue;
+            if (Pickups.Remove(pickup)) return "- " + pickup.GetProperName();
+            if (!MatchesMaterial(pickup, materials)) continue;
+            Pickups.Add(pickup);
+            return "+ " + pickup.GetProperName();
         }
 
         var building = Grid.Objects[cell, (int)ObjectLayer.Building];
         var storage = building != null ? building.GetComponent<Storage>() : null;
         if (storage != null && IsDesignatable(storage))
         {
-            var added = !Storages.Remove(storage);
-            if (added) Storages.Add(storage);
-            return (added ? "+ " : "- ") + storage.GetProperName();
+            if (Storages.Remove(storage)) return "- " + storage.GetProperName();
+            if (!MatchesMaterial(storage, materials)) return null;
+            Storages.Add(storage);
+            return "+ " + storage.GetProperName();
         }
 
         return null;

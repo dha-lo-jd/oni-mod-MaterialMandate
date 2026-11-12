@@ -113,8 +113,8 @@ internal static class HarnessTests
         }
     }
 
-    // Pick mode dims the world and lights up what can be designated for the selected material, inside the camera view;
-    // leaving it restores everything.
+    // Pick mode dims the world and lights up what can be designated for the selected material, inside the camera view.
+    // Only lit things can be clicked, picking another material releases the targets, and leaving restores everything.
     [HarnessTest(Name = "materialmandate.ui_pick_mode_overlay", Tags = "materialmandate")]
     public static IEnumerator PickModeOverlayTest()
     {
@@ -159,20 +159,38 @@ internal static class HarnessTests
             Check.Equal(1, PickModeOverlay.LitLevel(fullLocker), "container holding the selected material");
             Check.Equal(0, PickModeOverlay.LitLevel(emptyLocker), "empty container");
 
-            // A designated target stays lit whatever the material.
-            MandateSelection.Pickups.Add(other.GetComponent<Pickupable>());
+            // Only what is lit can be clicked.
+            Check.True(MandateSelection.Toggle(cells[1]) == null, "debris of another material was designated");
+            Check.True(MandateSelection.Toggle(cells[3]) == null, "an empty container was designated");
+            Check.Equal(0, MandateSelection.Count, "targets after clicking things that are not lit");
+            Check.NotNull(MandateSelection.Toggle(cells[0]), "debris of the selected material was not designated");
+            Check.NotNull(MandateSelection.Toggle(cells[2]), "the container holding the selected material was not designated");
+            Check.Equal(2, MandateSelection.Count, "targets after clicking the lit debris and container");
             PickModeOverlay.Refresh();
-            Check.Equal(2, PickModeOverlay.LitLevel(other), "designated debris of another material");
-            MandateSelection.ClearTargets();
+            Check.Equal(2, PickModeOverlay.LitLevel(same), "designated debris");
+            Check.Equal(2, PickModeOverlay.LitLevel(fullLocker), "designated container");
 
-            // The highlight follows the material selection.
+            // Clicking a designated target again releases it.
+            Check.NotNull(MandateSelection.Toggle(cells[2]), "the designated container was not released");
+            Check.Equal(1, MandateSelection.Count, "targets after releasing the container");
+
+            // Re-activating the tool with the same material keeps the targets.
+            BuildTool.Instance.Activate(def, new List<Tag>(sandstone));
+            Check.Equal(1, MandateSelection.Count, "targets after re-selecting the same material");
+
+            // Picking another material releases every target, stays in pick mode, and the highlight follows.
             BuildTool.Instance.Activate(def, granite);
-            PickModeOverlay.Refresh();
+            Check.Equal(0, MandateSelection.Count, "targets after picking another material");
+            Check.True(MandateSelection.PickMode, "picking another material left pick mode");
             Check.Equal(0, PickModeOverlay.LitLevel(same), "Sandstone debris with Granite selected");
             Check.Equal(1, PickModeOverlay.LitLevel(other), "Granite debris with Granite selected");
             Check.Equal(0, PickModeOverlay.LitLevel(fullLocker), "Sandstone container with Granite selected");
             Check.True(controller.HighlightColour.g == 0, "highlight of the unselected material was not removed");
+            Check.True(MandateSelection.Toggle(cells[0]) == null, "Sandstone debris was designated with Granite selected");
+            Check.NotNull(MandateSelection.Toggle(cells[1]), "Granite debris was not designated with Granite selected");
             BuildTool.Instance.Activate(def, sandstone);
+            Check.Equal(0, MandateSelection.Count, "targets after going back to Sandstone");
+            PickModeOverlay.Refresh();
 
             // Only what the camera shows is lit.
             Grid.CellToXY(home, out var homeX, out var homeY);
@@ -259,7 +277,28 @@ internal static class HarnessTests
         {
             Check.True(scene.IsBuilt, "tile was not built");
             Check.Near(0f, scene.TargetMass, 0.5, "target chunk should be used up");
-            Check.Near(140f, scene.DecoyMass, 1.0, "decoy chunk should supply the remaining 160 kg");
+            Check.Near(140f, scene.DecoyMass, 1.0, "decoy chunk should supply the remaining 160 kg; " + scene.OtherSources());
+        }
+        finally
+        {
+            scene.Cleanup();
+        }
+
+        yield return Wait.Seconds(3f, 3); // let the grid settle before the next test picks its floor
+    }
+
+    // Same as e2, but the decoy lies right next to the target, where a trip would normally pick it up along the way.
+    // The trip must bring the 40 kg only and leave the rest to a second delivery: the tile is not finished short.
+    [HarnessTest(Name = "materialmandate.e3_neighbour_is_not_counted", Tags = "materialmandate,e2e", TimeoutSeconds = 600)]
+    public static IEnumerator NeighbourIsNotCounted()
+    {
+        var scene = Scene.Create(targetMass: 40f, decoyMass: 300f, decoyNextToTarget: true);
+        yield return scene.WaitUntilBuilt();
+        try
+        {
+            Check.True(scene.IsBuilt, "tile was not built");
+            Check.Near(0f, scene.TargetMass, 0.5, "target chunk should be used up");
+            Check.Near(140f, scene.DecoyMass, 1.0, "decoy chunk should supply the remaining 160 kg; " + scene.OtherSources());
         }
         finally
         {
@@ -332,7 +371,8 @@ internal static class HarnessTests
 
         private static float Mass(Pickupable p) => p == null ? 0f : p.GetComponent<PrimaryElement>().Mass;
 
-        public static Scene Create(float targetMass, float decoyMass, bool viaUi = false, bool container = false)
+        public static Scene Create(float targetMass, float decoyMass, bool viaUi = false, bool container = false,
+            bool decoyNextToTarget = false)
         {
             KeepAlive();
             var baseline = new HashSet<Pickupable>(Components.Pickupables.Items.Where(p => p != null));
@@ -345,6 +385,16 @@ internal static class HarnessTests
             var decoyCell = cells.First();
             var targetCell = cells.Last();
             scene.siteCell = cells[cells.Count / 2];
+            if (decoyNextToTarget)
+            {
+                // Two floor cells side by side for the chunks, any other one for the site.
+                var pair = cells.Where(c => cells.Contains(Grid.CellRight(c))).ToList();
+                Check.True(pair.Count > 0, "no two free floor cells side by side next to the duplicant");
+                targetCell = pair[0];
+                decoyCell = Grid.CellRight(targetCell);
+                scene.siteCell = cells.Last(c => c != targetCell && c != decoyCell);
+            }
+
             scene.decoy = Spawn(decoyCell, decoyMass);
             scene.targetCell = targetCell;
             if (container)
@@ -382,6 +432,7 @@ internal static class HarnessTests
             }
 
             Check.NotNull(scene.site.GetComponent<ConstructionMandate>(), "mandate was not attached");
+            Debug.Log("[MaterialMandate] scene start: target@" + targetCell + " " + targetMass + "kg, " + scene.OtherSources());
             return scene;
         }
 
@@ -426,8 +477,8 @@ internal static class HarnessTests
         // Advances the game in short steps until the tile is complete (at most ~300 s of game time).
         public IEnumerator WaitUntilBuilt()
         {
-            for (var i = 0; i < 15 && !IsBuilt; i++)
-                yield return Wait.Seconds(20f, 3);
+            for (var i = 0; i < 100 && !IsBuilt; i++)
+                yield return Wait.Seconds(3f, 3);
         }
 
         // Every test advances game time; keep the duplicants fed so a long run does not starve them.
@@ -442,6 +493,31 @@ internal static class HarnessTests
                     if (instance != null) instance.SetValue(instance.GetMax());
                 }
             }
+        }
+
+        // Other loose or stored chunks of the test material: what normal delivery could have used instead of the decoy.
+        public string OtherSources()
+        {
+            var tag = Material.CreateTag();
+            var parts = new List<string>();
+            foreach (var pickup in Components.Pickupables.Items)
+            {
+                if (pickup == null || pickup == target || pickup == decoy || pickup.KPrefabID == null || pickup.KPrefabID.PrefabTag != tag) continue;
+                parts.Add(Mass(pickup).ToString("0") + "kg@" + Grid.PosToCell(pickup) + (pickup.storage != null ? " in " + pickup.storage.name : "") +
+                          (baseline.Contains(pickup) ? "" : " (new)"));
+            }
+
+            var minion = Components.LiveMinionIdentities[0];
+            var driver = minion.GetComponent<ChoreDriver>();
+            var chore = driver != null && driver.GetCurrentChore() != null ? driver.GetCurrentChore().choreType.Id : "none";
+            var layer = Grid.Objects[siteCell, (int)ObjectLayer.FoundationTile];
+            var siteStorage = site == null ? null : site.GetComponent<Storage>();
+            var stored = siteStorage == null ? "-" : string.Join("+", siteStorage.items.Where(i => i != null).Select(i => i.GetComponent<PrimaryElement>().Mass.ToString("0")));
+            return "decoy@" + (decoy == null ? "gone" : Grid.PosToCell(decoy).ToString()) + " site@" + siteCell +
+                   " siteAlive=" + (site != null) + " siteStored=" + stored +
+                   " layer=" + (layer == null ? "null" : layer.name + "/" + layer.GetComponent<PrimaryElement>().Mass.ToString("0") + "kg") +
+                   " dupe@" + Grid.PosToCell(minion) + " chore=" + chore + " dupes=" + Components.LiveMinionIdentities.Count +
+                   " other " + Material + ": " + (parts.Count == 0 ? "none" : string.Join(", ", parts.Take(12)));
         }
 
         public string Diagnose()
