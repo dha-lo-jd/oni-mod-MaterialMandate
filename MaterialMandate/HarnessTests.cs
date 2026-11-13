@@ -115,6 +115,9 @@ internal static class HarnessTests
 
     // Pick mode dims the world and lights up what can be designated for the selected material, inside the camera view.
     // Only lit things can be clicked, picking another material releases the targets, and leaving restores everything.
+    private static bool PreviewActive() =>
+        BuildTool.Instance.visualizer.activeSelf;
+
     [HarnessTest(Name = "materialmandate.ui_pick_mode_overlay", Tags = "materialmandate")]
     public static IEnumerator PickModeOverlayTest()
     {
@@ -152,6 +155,7 @@ internal static class HarnessTests
 
             HarnessDebug.ActivateBuild("Tile", pickMode: true); // selects Sandstone
             Check.True(PickModeOverlay.IsShown, "overlay was not shown");
+            Check.False(PreviewActive(), "building preview must be hidden in pick mode");
             PickModeOverlay.Refresh();
             Check.True(controller.HighlightColour.g > 0, "debris of the selected material was not highlighted");
             Check.Equal(1, PickModeOverlay.LitLevel(same), "debris of the selected material");
@@ -177,6 +181,9 @@ internal static class HarnessTests
             // Re-activating the tool with the same material keeps the targets.
             BuildTool.Instance.Activate(def, new List<Tag>(sandstone));
             Check.Equal(1, MandateSelection.Count, "targets after re-selecting the same material");
+            BuildTool.Instance.OnFocus(true); // the cursor moving from the HUD onto the world
+            Check.False(PreviewActive(), "moving the cursor onto the world brought the preview back");
+            Check.False(PreviewActive(), "re-activating the tool in pick mode brought the preview back");
 
             // Picking another material releases every target, stays in pick mode, and the highlight follows.
             BuildTool.Instance.Activate(def, granite);
@@ -211,6 +218,7 @@ internal static class HarnessTests
 
             MandateButton.ExitPickMode();
             Check.False(PickModeOverlay.IsShown, "overlay was not hidden");
+            Check.True(PreviewActive(), "building preview must come back after pick mode");
             Check.True(controller.HighlightColour.g == 0, "highlight was not removed");
             Check.Equal(0, PickModeOverlay.LitLevel(same), "lit level after leaving pick mode");
         }

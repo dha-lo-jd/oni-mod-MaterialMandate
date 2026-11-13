@@ -23,6 +23,7 @@ public static class BuildToolActivatePatch
     public static void Postfix(IList<Tag> selected_elements)
     {
         if (MandateSelection.MaterialsSelected(selected_elements)) PickModeOverlay.RefreshIfShown();
+        if (MandateSelection.PickMode) PickModeOverlay.ApplyPreview();
         MandateButton.Refresh();
     }
 }
@@ -41,6 +42,23 @@ public static class BuildToolLeftClickDownPatch
         MandateButton.Refresh();
         return false;
     }
+}
+
+// The tool re-shows its preview whenever the cursor moves from the HUD onto the world (DragTool.OnFocus).
+[HarmonyPatch(typeof(DragTool), nameof(DragTool.OnFocus))]
+public static class InterfaceToolOnFocusPatch
+{
+    public static void Postfix(DragTool __instance)
+    {
+        if (__instance == BuildTool.Instance && MandateSelection.PickMode) PickModeOverlay.ApplyPreview();
+    }
+}
+
+// No building preview (and no tile preview) while picking targets.
+[HarmonyPatch(typeof(BuildTool), "UpdateVis")]
+public static class BuildToolUpdateVisPatch
+{
+    public static bool Prefix() => !MandateSelection.PickMode;
 }
 
 [HarmonyPatch(typeof(BuildTool), nameof(BuildTool.OnLeftClickUp))]

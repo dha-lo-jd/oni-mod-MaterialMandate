@@ -25,16 +25,35 @@ public static class PickModeOverlay
 
     public static bool IsShown => driver != null;
 
+    // The building preview follows the cursor; hidden while picking so that it is clear the click designates a target
+    // instead of placing the building. The build tool re-creates the preview on activation, so this is applied again then.
+    public static void ApplyPreview()
+    {
+        var tool = BuildTool.Instance;
+        if (tool == null) return;
+        var visible = !MandateSelection.PickMode;
+        var preview = tool.visualizer;
+        if (preview != null && preview.activeSelf != visible) preview.SetActive(visible);
+        // Tile-like buildings are also drawn by the block tile renderer, which UpdateVis refreshes on every mouse move
+        // (skipped in pick mode, see BuildToolUpdateVisPatch); clear what is already there.
+        if (!visible) HarmonyLib.Traverse.Create(tool).Method("ClearTilePreview").GetValue();
+        var remaining = ResourceRemainingDisplayScreen.instance;
+        if (remaining != null && !visible) remaining.DeactivateDisplay();
+        else if (remaining != null && preview != null) remaining.ActivateDisplay(preview);
+    }
+
     public static void Show()
     {
         if (driver != null) return;
         CreateDim();
         driver = new GameObject("MaterialMandatePickModeOverlay").AddComponent<Driver>();
+        ApplyPreview();
         Refresh();
     }
 
     public static void Hide()
     {
+        ApplyPreview();
         if (driver != null) Object.Destroy(driver.gameObject);
         driver = null;
         if (dim != null) Object.Destroy(dim);
