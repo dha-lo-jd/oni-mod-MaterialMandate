@@ -467,11 +467,11 @@ internal static class HarnessTests
             Check.NotNull(site.GetComponent<ConstructionMandate>(), "mandate was not attached");
         }
 
+        // A click with the build tool: the harness points the camera and the mouse at the cell, then presses and releases.
         private static void Click(int cell)
         {
-            var pos = Grid.CellToPosCCC(cell, Grid.SceneLayer.Move);
-            BuildTool.Instance.OnLeftClickDown(pos);
-            BuildTool.Instance.OnLeftClickUp(pos);
+            Check.True(Play.ActiveTool == BuildTool.Instance, "the build tool should be the active tool, got " + Play.ActiveTool);
+            Play.Click(cell);
         }
 
         // Advances the game in short steps until the tile is complete (at most ~300 s of game time).
