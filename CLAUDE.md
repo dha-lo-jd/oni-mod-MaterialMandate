@@ -4,7 +4,7 @@ ONI mod. Build: `dotnet build` (Debug copies to `ModInstallPath` from `Local.Bui
 
 ## 実機検証
 ONI 実機で検証するには Gravitas.TestHarness を使う。テストは `[HarnessTest]` を付けた static メソッドとして書く（`MaterialMandate/HarnessTests.cs`、`#if DEBUG`）。
-実行: `python C:/Users/dha_1/RiderProjects/GravitasTestHarness/Gravitas.TestProbe/probe.py run --project . --save "Live Human Testing.sav" --tests '{"tags":["materialmandate"]}'`
+実行: `python C:/Users/dha_1/ONI-Modding/GravitasTestHarness/Gravitas.TestProbe/probe.py run --project . --save "Live Human Testing.sav" --tests '{"tags":["materialmandate"]}'`
 テストは複製人間のいるセーブが要る（運搬と建築を実際に行わせるため）。`harness.json` の既定のセーブは無人なので、`--save` を付ける。
 ゲームを起動し本番の mods.json を書き換えるので、実行前にユーザーに確認する。詳細は harness repo の `README.md` と `protocol.md`。
 
